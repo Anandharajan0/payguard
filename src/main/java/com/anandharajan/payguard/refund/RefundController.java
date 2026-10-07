@@ -1,6 +1,6 @@
 package com.anandharajan.payguard.refund;
 
-import com.anandharajan.payguard.policy.RefundDecision;
+import com.anandharajan.payguard.policy.RefundExecutionResult;
 import com.anandharajan.payguard.policy.RefundRequest;
 import com.anandharajan.payguard.policy.RefundService;
 import org.springframework.web.bind.annotation.*;
@@ -16,7 +16,12 @@ public class RefundController {
     }
 
     @PostMapping("/evaluate")
-    public RefundDecision evaluate(@RequestBody RefundRequest request) {
+    public Object evaluate(@RequestBody RefundRequest request) {
         return refundService.evaluate(request);
+    }
+
+    @PostMapping
+    public RefundExecutionResult refund(@RequestBody RefundRequest request) {
+        return refundService.refund(request);
     }
 }
