@@ -24,4 +24,11 @@ public class RefundController {
     public RefundExecutionResult refund(@RequestBody RefundRequest request) {
         return refundService.refund(request);
     }
+
+    @PostMapping("/approvals/{approvalId}/approve")
+    public RefundExecutionResult approve(
+            @PathVariable String approvalId
+    ) {
+        return refundService.approve(approvalId);
+    }
 }

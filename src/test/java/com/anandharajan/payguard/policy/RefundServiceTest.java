@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 class RefundServiceTest {
 
     private final PayPalClient payPalClient = Mockito.mock(PayPalClient.class);
-    private final RefundService refundService = new RefundService(payPalClient);
+    private final RefundService refundService = new RefundService(payPalClient, new ApprovalStore());
 
     @Test
     void deniedRefundNeverCallsPayPal() {
