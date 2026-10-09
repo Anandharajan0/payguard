@@ -6,5 +6,6 @@ public record RefundRequest(
         String captureId,
         Long amountCents,
         String currency,
-        Instant transactionCreatedAt
+        Instant transactionCreatedAt,
+        AgentContext agentContext
 ) {}

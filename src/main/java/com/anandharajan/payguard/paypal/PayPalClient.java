@@ -10,7 +10,7 @@ import java.math.BigDecimal;
 import java.util.Map;
 
 @Component
-public class PayPalClient {
+public class PayPalClient implements PayPalRefundGateway {
 
     private final RestClient client;
     private final String clientId;

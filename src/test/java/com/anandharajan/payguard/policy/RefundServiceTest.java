@@ -6,6 +6,7 @@ import org.mockito.Mockito;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Instant;
+import java.time.Clock;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -13,7 +14,13 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 class RefundServiceTest {
 
     private final PayPalClient payPalClient = Mockito.mock(PayPalClient.class);
-    private final RefundService refundService = new RefundService(payPalClient, new ApprovalStore());
+    private final RefundService refundService = new RefundService(
+            payPalClient,
+            new RefundOperationStore(Clock.systemUTC()),
+            new DemoBudgetDecision(),
+            event -> {},
+            Clock.systemUTC()
+    );
 
     @Test
     void deniedRefundNeverCallsPayPal() {
@@ -21,10 +28,11 @@ class RefundServiceTest {
                 "CAPTURE-1",
                 null,
                 "USD",
-                Instant.now()
+                Instant.now(),
+                AgentContext.authenticatedAgent("test-agent", "test-mandate")
         );
 
-        RefundExecutionResult result = refundService.refund(request);
+        RefundExecutionResult result = refundService.refund(request, "key-denied");
 
         assertEquals(RefundDecision.Status.DENIED, result.decision().status());
         assertNull(result.refundId());
@@ -38,7 +46,8 @@ class RefundServiceTest {
                 "CAPTURE-2",
                 3_000L,
                 "USD",
-                Instant.now()
+                Instant.now(),
+                AgentContext.authenticatedAgent("test-agent", "test-mandate")
         );
 
         Mockito.when(payPalClient.refund(
@@ -50,7 +59,7 @@ class RefundServiceTest {
                 .put("id", "REFUND-1")
                 .put("status", "COMPLETED"));
 
-        RefundExecutionResult result = refundService.refund(request);
+        RefundExecutionResult result = refundService.refund(request, "key-approved");
 
         assertEquals(RefundDecision.Status.APPROVED, result.decision().status());
         assertEquals("REFUND-1", result.refundId());
@@ -62,5 +71,34 @@ class RefundServiceTest {
                 Mockito.eq("USD"),
                 Mockito.anyString()
         );
+    }
+
+    @Test
+    void defaultServiceFailsClosedWhenBudgetIsUnevaluated() {
+        RefundService failClosedService = new RefundService(
+                payPalClient,
+                new RefundOperationStore(Clock.systemUTC()),
+                event -> {},
+                Clock.systemUTC()
+        );
+
+        RefundExecutionResult result = failClosedService.refund(
+                new RefundRequest(
+                        "CAPTURE-DEFAULT",
+                        3_000L,
+                        "USD",
+                        Instant.now(),
+                        AgentContext.authenticatedAgent(
+                                "test-agent",
+                                "test-mandate"
+                        )
+                ),
+                "key-default-budget"
+        );
+
+        assertEquals(RefundState.DENIED, result.state());
+        assertEquals("DAILY_BUDGET_NOT_EVALUATED",
+                result.decision().reason());
+        Mockito.verifyNoInteractions(payPalClient);
     }
 }
