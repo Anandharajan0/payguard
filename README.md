@@ -4,6 +4,22 @@ PAYGUARD is a prototype refund firewall for the PayPal AI Hackathon. It
 separates AI-proposed refund intent from deterministic policy authorization and
 PayPal execution.
 
+## Durable Financial Spine
+
+Set `PAYGUARD_PERSISTENCE_MODE=postgres` (the default) and configure
+`PAYGUARD_DB_URL`, `PAYGUARD_DB_USERNAME`, and `PAYGUARD_DB_PASSWORD`.
+The configured `PAYGUARD_MANDATE_ID` is provisioned if absent with
+`PAYGUARD_DAILY_LIMIT_CENTS` (default `200000`); existing mandate status and
+limits are not overwritten.
+Flyway applies the durable schema on startup. The application uses explicit
+Spring JDBC transactions and UTC budget days; it does not use JPA.
+
+For local unit/security tests, the test configuration selects
+`payguard.persistence.mode=in-memory`. Real PostgreSQL locking tests run when
+`PAYGUARD_TEST_POSTGRES_URL` is set, for example
+`jdbc:postgresql://localhost:55432/payguard`; they are intentionally skipped
+when no PostgreSQL test database is supplied rather than replaced by H2.
+
 ## Prototype security and durability boundaries
 
 - The current HTTP API is **machine-to-machine only** and uses separate
@@ -17,8 +33,14 @@ PayPal execution.
   slice. Browser dashboard authentication requires a separate session/OIDC and
   CSRF design in a later phase.
 - Idempotency keys, approvals, and audit events are process-local in this
-  prototype. They are not durable across restart and do not support
-  multi-instance deployment.
+  prototype mode only. PostgreSQL mode persists operations, approvals,
+  idempotency, budget reservations, and audit events across restart.
+- PostgreSQL mode uses UTC budget days and row-locked atomic reservations.
+  A reservation is settled only for a known successful PayPal outcome,
+  released for a definite failure, and retained for ambiguous outcomes.
+- Startup recovery marks expired `IN_FLIGHT` operations as requiring
+  reconciliation without releasing their reservations. It cannot determine
+  whether PayPal moved money; provider lookup or webhooks remain future work.
 - Budget enforcement is fail-closed by default. The configured daily budget is
   not implemented until atomic durable reservation exists.
 - For a local hackathon demonstration only, set

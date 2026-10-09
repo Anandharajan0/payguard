@@ -1,6 +1,7 @@
 package com.anandharajan.payguard.policy;
 
 import org.springframework.stereotype.Component;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -11,7 +12,12 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
-public class RefundOperationStore {
+@ConditionalOnProperty(
+        name = "payguard.persistence.mode",
+        havingValue = "in-memory",
+        matchIfMissing = false
+)
+public class RefundOperationStore implements RefundOperationRepository {
 
     private final Map<String, RefundOperation> operationsByKey =
             new ConcurrentHashMap<>();
@@ -60,6 +66,46 @@ public class RefundOperationStore {
 
     public RefundOperation findByIdempotencyKey(String idempotencyKey) {
         return operationsByKey.get(idempotencyKey);
+    }
+
+    @Override
+    public synchronized boolean beginAutomaticExecution(String operationId) {
+        RefundOperation operation = findByOperationId(operationId);
+        return operation != null && operation.beginAutomaticExecution();
+    }
+
+    @Override
+    public synchronized boolean approve(
+            String approvalId,
+            ApproverContext approver
+    ) {
+        RefundOperation operation = findByApprovalId(approvalId);
+        return operation != null && operation.approve(approver);
+    }
+
+    @Override
+    public synchronized RefundOperation complete(
+            String operationId,
+            com.anandharajan.payguard.paypal.PayPalRefundOutcome outcome
+    ) {
+        RefundOperation operation = findByOperationId(operationId);
+        if (operation == null) {
+            return null;
+        }
+        operation.complete(outcome);
+        return operation;
+    }
+
+    @Override
+    public int recoverStaleOperations(java.time.Instant now) {
+        return 0;
+    }
+
+    private RefundOperation findByOperationId(String operationId) {
+        return operationsByKey.values().stream()
+                .filter(operation -> operation.operationId().equals(operationId))
+                .findFirst()
+                .orElse(null);
     }
 
     public static String fingerprint(RefundRequest request) {

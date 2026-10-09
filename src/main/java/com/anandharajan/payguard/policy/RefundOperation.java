@@ -12,7 +12,7 @@ public final class RefundOperation {
     private final RefundRequest request;
     private final String requesterAgentId;
     private final String mandateId;
-    private final String approvalId;
+    private String approvalId;
     private final RefundDecision decision;
     private final Clock clock;
     private RefundState state;
@@ -131,6 +131,18 @@ public final class RefundOperation {
 
     public synchronized RefundState state() {
         return state;
+    }
+
+    synchronized void restore(
+            RefundState restoredState,
+            String restoredApprovalId,
+            String refundId,
+            String paypalStatus,
+            String error
+    ) {
+        this.approvalId = restoredApprovalId;
+        this.state = restoredState;
+        this.result = result(refundId, paypalStatus, error);
     }
 
     private RefundExecutionResult result(
