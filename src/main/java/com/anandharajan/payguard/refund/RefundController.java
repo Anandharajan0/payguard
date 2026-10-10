@@ -66,6 +66,15 @@ public class RefundController {
         );
     }
 
+    @GetMapping("/operations/{operationId}")
+    public RefundExecutionResult operation(@PathVariable String operationId) {
+        var operation = refundService.findByOperationId(operationId);
+        if (operation == null) {
+            throw new OperationNotFoundException(operationId);
+        }
+        return operation.result();
+    }
+
     private RefundRequest toDomain(
             RefundHttpRequest request,
             Authentication authentication

@@ -69,8 +69,13 @@ public class RefundOperationStore implements RefundOperationRepository {
     }
 
     @Override
+    public RefundOperation findByOperationId(String operationId) {
+        return findByOperationIdInternal(operationId);
+    }
+
+    @Override
     public synchronized boolean beginAutomaticExecution(String operationId) {
-        RefundOperation operation = findByOperationId(operationId);
+        RefundOperation operation = findByOperationIdInternal(operationId);
         return operation != null && operation.beginAutomaticExecution();
     }
 
@@ -88,7 +93,7 @@ public class RefundOperationStore implements RefundOperationRepository {
             String operationId,
             com.anandharajan.payguard.paypal.PayPalRefundOutcome outcome
     ) {
-        RefundOperation operation = findByOperationId(operationId);
+        RefundOperation operation = findByOperationIdInternal(operationId);
         if (operation == null) {
             return null;
         }
@@ -101,7 +106,7 @@ public class RefundOperationStore implements RefundOperationRepository {
         return 0;
     }
 
-    private RefundOperation findByOperationId(String operationId) {
+    private RefundOperation findByOperationIdInternal(String operationId) {
         return operationsByKey.values().stream()
                 .filter(operation -> operation.operationId().equals(operationId))
                 .findFirst()

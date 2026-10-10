@@ -51,3 +51,19 @@ when no PostgreSQL test database is supplied rather than replaced by H2.
   PostgreSQL/workflow phase.
 - The PayPal Sandbox adapter remains the execution integration, using the
   Sandbox OAuth flow and stable `PayPal-Request-Id` values.
+
+## Payment resolution boundary
+
+The prototype also exposes `POST /resolution-cases` for a bounded support
+resolution flow. The fixture resolution agent classifies a customer issue
+against trusted transaction evidence and may propose a refund or request more
+information. It cannot invent a capture ID, amount, currency, mandate, or
+authority. The existing deterministic policy, budget reservation, approval
+workflow, audit path, and PayPal adapter remain the only authorization and
+execution path.
+
+The current evidence provider is a deterministic demo fixture for
+`CAPTURE-35`, `CAPTURE-475`, and `CAPTURE-600`; it is not a general PayPal
+transaction lookup. A real model adapter and provider-backed transaction
+evidence are future work. The resolution endpoint remains machine-to-machine
+and requires the AGENT role.

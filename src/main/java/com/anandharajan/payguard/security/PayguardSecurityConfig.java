@@ -27,6 +27,7 @@ public class PayguardSecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/refunds/approvals/**").hasRole("APPROVER")
                         .requestMatchers("/refunds/**").hasRole("AGENT")
+                        .requestMatchers("/resolution-cases/**").hasRole("AGENT")
                         .anyRequest().denyAll())
                 .httpBasic(httpBasic -> {});
         return http.build();

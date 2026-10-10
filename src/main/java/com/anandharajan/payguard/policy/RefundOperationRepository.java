@@ -14,6 +14,8 @@ public interface RefundOperationRepository {
 
     RefundOperation findByIdempotencyKey(String idempotencyKey);
 
+    RefundOperation findByOperationId(String operationId);
+
     boolean beginAutomaticExecution(String operationId);
 
     boolean approve(String approvalId, ApproverContext approver);

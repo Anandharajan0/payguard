@@ -142,6 +142,33 @@ class RefundControllerSecurityTest {
         assertEquals("payguard-demo-mandate", event.mandateId());
     }
 
+    @Test
+    void resolutionCasesAreAgentOnly() throws Exception {
+        mockMvc.perform(post("/resolution-cases")
+                        .with(httpBasic("test-agent", "test-agent-secret"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "customerIssue":"Customer was charged twice and wants a refund",
+                                  "captureId":"CAPTURE-35",
+                                  "idempotencyKey":"resolution-http"
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/resolution-cases")
+                        .with(httpBasic("test-approver", "test-approver-secret"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "customerIssue":"Customer was charged twice and wants a refund",
+                                  "captureId":"CAPTURE-35",
+                                  "idempotencyKey":"resolution-http-2"
+                                }
+                                """))
+                .andExpect(status().isForbidden());
+    }
+
     private static String validBody() {
         return """
                 {

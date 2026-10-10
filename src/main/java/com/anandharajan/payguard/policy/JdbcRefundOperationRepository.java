@@ -122,6 +122,16 @@ public class JdbcRefundOperationRepository
     }
 
     @Override
+    public RefundOperation findByOperationId(String operationId) {
+        List<RefundOperation> rows = jdbc.query(
+                "select * from refund_operations where operation_id = ?",
+                mapper(),
+                UUID.fromString(operationId)
+        );
+        return rows.isEmpty() ? null : rows.getFirst();
+    }
+
+    @Override
     public boolean beginAutomaticExecution(String operationId) {
         return transactions.execute(status -> jdbc.update(
                 """

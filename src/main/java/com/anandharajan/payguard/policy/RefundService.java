@@ -104,6 +104,10 @@ public class RefundService {
         return decision;
     }
 
+    public RefundOperation findByOperationId(String operationId) {
+        return operationStore.findByOperationId(operationId);
+    }
+
     public RefundExecutionResult refund(
             RefundRequest request,
             String idempotencyKey

@@ -183,6 +183,11 @@ class RefundServiceTest {
         }
 
         @Override
+        public RefundOperation findByOperationId(String operationId) {
+            return delegate.findByOperationId(operationId);
+        }
+
+        @Override
         public boolean beginAutomaticExecution(String operationId) {
             return delegate.beginAutomaticExecution(operationId);
         }
