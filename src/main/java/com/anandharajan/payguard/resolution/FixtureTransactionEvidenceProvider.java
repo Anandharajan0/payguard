@@ -3,7 +3,6 @@ package com.anandharajan.payguard.resolution;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
-import java.time.Instant;
 import java.util.Map;
 
 @Component
@@ -33,9 +32,13 @@ public final class FixtureTransactionEvidenceProvider
                         captureId,
                         amount,
                         "USD",
-                        Instant.now(clock).minusSeconds(60),
+                        java.time.Instant.parse("2026-10-01T00:00:00Z"),
                         "payguard-demo-mandate",
-                        "COMPLETED"
+                        "COMPLETED",
+                        amount,
+                        java.util.List.of(),
+                        "fixture-v1-" + captureId,
+                        clock.instant()
                 );
     }
 }

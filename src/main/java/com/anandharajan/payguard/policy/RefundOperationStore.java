@@ -44,6 +44,19 @@ public class RefundOperationStore implements RefundOperationRepository {
             }
             return existing;
         }
+        String captureId = request == null ? null : request.captureId();
+        boolean captureBlocked = captureId != null
+                && operationsByKey.values().stream()
+                .anyMatch(operation ->
+                        java.util.Objects.equals(
+                                operation.request().captureId(),
+                                captureId)
+                        && blocksCaptureRetry(operation.state()));
+        if (captureBlocked) {
+            throw new CaptureRefundConflictException(
+                    "A prior refund operation still blocks this capture"
+            );
+        }
 
         RefundOperation operation = new RefundOperation(
                 java.util.UUID.randomUUID().toString(),
@@ -60,12 +73,30 @@ public class RefundOperationStore implements RefundOperationRepository {
         return operation;
     }
 
+    private static boolean blocksCaptureRetry(RefundState state) {
+        return state == RefundState.PENDING_APPROVAL
+                || state == RefundState.APPROVED
+                || state == RefundState.IN_FLIGHT
+                || state == RefundState.EXECUTED
+                || state == RefundState.RECONCILIATION_REQUIRED;
+    }
+
     public RefundOperation findByApprovalId(String approvalId) {
         return operationsByApproval.get(approvalId);
     }
 
     public RefundOperation findByIdempotencyKey(String idempotencyKey) {
         return operationsByKey.get(idempotencyKey);
+    }
+
+    @Override
+    public RefundOperation findByIdempotencyKey(
+            String mandateId,
+            String idempotencyKey
+    ) {
+        RefundOperation operation = operationsByKey.get(idempotencyKey);
+        return operation != null && mandateId.equals(operation.mandateId())
+                ? operation : null;
     }
 
     @Override

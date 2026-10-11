@@ -14,6 +14,13 @@ public interface RefundOperationRepository {
 
     RefundOperation findByIdempotencyKey(String idempotencyKey);
 
+    default RefundOperation findByIdempotencyKey(
+            String mandateId,
+            String idempotencyKey
+    ) {
+        return findByIdempotencyKey(idempotencyKey);
+    }
+
     RefundOperation findByOperationId(String operationId);
 
     boolean beginAutomaticExecution(String operationId);

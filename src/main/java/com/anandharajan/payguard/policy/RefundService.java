@@ -3,6 +3,7 @@ package com.anandharajan.payguard.policy;
 import com.anandharajan.payguard.audit.AuditEvent;
 import com.anandharajan.payguard.audit.AuditSink;
 import com.anandharajan.payguard.paypal.PayPalRefundGateway;
+import com.anandharajan.payguard.paypal.PayPalRefundException;
 import com.anandharajan.payguard.paypal.PayPalRefundOutcome;
 import com.anandharajan.payguard.paypal.PayPalRefundOutcomeMapper;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -108,6 +109,40 @@ public class RefundService {
         return operationStore.findByOperationId(operationId);
     }
 
+    public RefundOperation findByIdempotencyKey(String idempotencyKey) {
+        return operationStore.findByIdempotencyKey(idempotencyKey);
+    }
+
+    public RefundOperation findByIdempotencyKey(
+            String mandateId,
+            String idempotencyKey
+    ) {
+        return operationStore.findByIdempotencyKey(mandateId, idempotencyKey);
+    }
+
+    public RefundExecutionResult resumeAutomaticExecution(String operationId) {
+        RefundOperation operation = operationStore.findByOperationId(operationId);
+        if (operation == null || operation.state() != RefundState.APPROVED) {
+            return operation == null ? null : operation.result();
+        }
+        String actorId = operation.request().agentContext().agentId();
+        boolean begun = transactional(() -> {
+            boolean started = operationStore.beginAutomaticExecution(
+                    operation.operationId()
+            );
+            if (started) {
+                auditState(operation, RefundState.IN_FLIGHT, actorId,
+                        "PayPal execution started during operation recovery",
+                        "AGENT", null, null);
+            }
+            return started;
+        });
+        if (!begun) {
+            return reloadOperationResult(operationId);
+        }
+        return execute(operation, actorId, "AGENT");
+    }
+
     public RefundExecutionResult refund(
             RefundRequest request,
             String idempotencyKey
@@ -152,7 +187,7 @@ public class RefundService {
             return started;
         });
         if (!begun) {
-            return operation.result();
+            return reloadOperationResult(operation.operationId());
         }
         return execute(
                 operation,
@@ -194,7 +229,7 @@ public class RefundService {
             return changed;
         });
         if (!approved) {
-            return operation.result();
+            return reloadOperationResult(operation.operationId());
         }
         return execute(operation, approver.approverId(), "APPROVER");
     }
@@ -214,6 +249,8 @@ public class RefundService {
                     request.currency(),
                     operation.operationId()
             );
+        } catch (PayPalRefundException exception) {
+            outcome = exception.outcome();
         } catch (RestClientResponseException exception) {
             outcome = outcomeMapper.mapHttpFailure(
                     exception.getStatusCode().value()
@@ -235,6 +272,16 @@ public class RefundService {
                         ? "PayPal refund completed"
                         : outcome.error()
         ).result();
+    }
+
+    private RefundExecutionResult reloadOperationResult(String operationId) {
+        RefundOperation current = operationStore.findByOperationId(operationId);
+        if (current == null) {
+            throw new IllegalStateException(
+                    "Refund operation disappeared after a concurrent state transition"
+            );
+        }
+        return current.result();
     }
 
     private RefundOperation completeAndAudit(

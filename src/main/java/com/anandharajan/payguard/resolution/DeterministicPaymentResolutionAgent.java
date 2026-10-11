@@ -1,11 +1,17 @@
 package com.anandharajan.payguard.resolution;
 
 import org.springframework.stereotype.Component;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import java.util.List;
 import java.util.Locale;
 
 @Component
+@ConditionalOnProperty(
+        name = "payguard.resolution.agent-mode",
+        havingValue = "deterministic",
+        matchIfMissing = true
+)
 public final class DeterministicPaymentResolutionAgent
         implements PaymentResolutionAgent {
 
@@ -36,7 +42,7 @@ public final class DeterministicPaymentResolutionAgent
         }
         return new ResolutionProposal(
                 "PROPOSE_REFUND",
-                evidence.amountCents(),
+                evidence.remainingRefundableCents(),
                 evidence.captureId(),
                 0.96,
                 "The issue indicates a refund-related payment problem; propose the trusted captured amount",

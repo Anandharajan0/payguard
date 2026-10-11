@@ -4,8 +4,10 @@ import com.anandharajan.payguard.policy.RefundDecision;
 import com.anandharajan.payguard.policy.RefundExecutionResult;
 
 public record ResolutionCaseResponse(
+        String caseId,
         TransactionEvidence evidence,
         ResolutionProposal proposal,
         RefundDecision decision,
-        RefundExecutionResult execution
+        RefundExecutionResult execution,
+        String status
 ) {}

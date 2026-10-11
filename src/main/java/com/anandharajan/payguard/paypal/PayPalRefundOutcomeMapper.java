@@ -3,12 +3,10 @@ package com.anandharajan.payguard.paypal;
 import com.anandharajan.payguard.policy.RefundState;
 import tools.jackson.databind.JsonNode;
 
-import java.util.Locale;
-
 public final class PayPalRefundOutcomeMapper {
 
     public PayPalRefundOutcome map(JsonNode response) {
-        if (response == null) {
+        if (response == null || !response.isObject()) {
             return PayPalRefundOutcome.create(
                     RefundState.RECONCILIATION_REQUIRED,
                     null,
@@ -17,18 +15,30 @@ public final class PayPalRefundOutcomeMapper {
             );
         }
 
-        String refundId = text(response, "id");
-        String status = text(response, "status");
-        if (refundId == null || status == null) {
+        JsonNode refundIdNode = response.get("id");
+        JsonNode statusNode = response.get("status");
+        if (refundIdNode == null || !refundIdNode.isTextual()
+                || statusNode == null || !statusNode.isTextual()) {
             return PayPalRefundOutcome.create(
                     RefundState.RECONCILIATION_REQUIRED,
-                    refundId,
-                    status,
+                    null,
+                    null,
                     "PAYPAL_RESPONSE_INCOMPLETE"
             );
         }
 
-        return switch (status.toUpperCase(Locale.ROOT)) {
+        String refundId = refundIdNode.asText();
+        String status = statusNode.asText();
+        if (refundId.isBlank() || status.isBlank()) {
+            return PayPalRefundOutcome.create(
+                    RefundState.RECONCILIATION_REQUIRED,
+                    null,
+                    status.isBlank() ? null : status,
+                    "PAYPAL_RESPONSE_INCOMPLETE"
+            );
+        }
+
+        return switch (status) {
             case "COMPLETED" -> PayPalRefundOutcome.create(
                     RefundState.EXECUTED,
                     refundId,
@@ -39,7 +49,7 @@ public final class PayPalRefundOutcomeMapper {
                     RefundState.FAILED,
                     refundId,
                     status,
-                    "PAYPAL_REFUND_" + status.toUpperCase(Locale.ROOT)
+                    "PAYPAL_REFUND_" + status
             );
             case "PENDING" -> PayPalRefundOutcome.create(
                     RefundState.RECONCILIATION_REQUIRED,
@@ -57,14 +67,20 @@ public final class PayPalRefundOutcomeMapper {
     }
 
     public PayPalRefundOutcome mapHttpFailure(int statusCode) {
-        RefundState state = statusCode >= 400 && statusCode < 500
-                ? RefundState.FAILED
-                : RefundState.RECONCILIATION_REQUIRED;
         return PayPalRefundOutcome.create(
-                state,
+                RefundState.RECONCILIATION_REQUIRED,
                 null,
                 null,
                 "PAYPAL_HTTP_" + statusCode
+        );
+    }
+
+    public PayPalRefundOutcome mapNotDispatched() {
+        return PayPalRefundOutcome.create(
+                RefundState.FAILED,
+                null,
+                null,
+                "PAYPAL_TOKEN_UNAVAILABLE"
         );
     }
 
@@ -77,8 +93,4 @@ public final class PayPalRefundOutcomeMapper {
         );
     }
 
-    private static String text(JsonNode response, String field) {
-        String value = response.path(field).asText(null);
-        return value == null || value.isBlank() ? null : value;
-    }
 }

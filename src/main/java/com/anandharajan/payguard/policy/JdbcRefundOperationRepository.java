@@ -1,7 +1,9 @@
 package com.anandharajan.payguard.policy;
 
 import com.anandharajan.payguard.paypal.PayPalRefundOutcome;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.PreparedStatementCallback;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -38,67 +40,147 @@ public class JdbcRefundOperationRepository
             RefundRequest request,
             RefundDecision decision
     ) {
-        return transactions.execute(status -> {
-            String mandateId = request.agentContext()
-                    .merchantMandate().mandateId();
-            String operationId = UUID.randomUUID().toString();
-            String approvalId = decision.state() == RefundState.PENDING_APPROVAL
-                    ? UUID.randomUUID().toString()
-                    : null;
-            Instant now = clock.instant();
-            String fingerprint = RefundOperationStore.fingerprint(request);
-            int inserted = jdbc.update(
-                    """
-                    insert into refund_operations (
-                        operation_id, mandate_id, idempotency_key,
-                        request_fingerprint, capture_id, amount_cents, currency,
-                        transaction_created_at, requester_agent_id,
-                        decision_state, decision_reason, budget_status,
-                        budget_explanation, state, approval_id, correlation_id,
-                        provider_request_id, created_at, updated_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                              ?, ?, ?, ?)
-                    on conflict (mandate_id, idempotency_key) do nothing
-                    """,
-                    UUID.fromString(operationId),
-                    mandateId,
-                    idempotencyKey,
-                    fingerprint,
-                    request.captureId(),
-                    request.amountCents(),
-                    request.currency(),
-                    Timestamp.from(request.transactionCreatedAt()),
-                    request.agentContext().agentId(),
-                    decision.state().name(),
-                    decision.reason(),
-                    decision.budgetDecision().status().name(),
-                    decision.budgetDecision().explanation(),
-                    decision.state().name(),
-                    approvalId == null ? null : UUID.fromString(approvalId),
-                    UUID.fromString(decision.correlationId()),
-                    operationId,
-                    Timestamp.from(now),
-                    Timestamp.from(now)
-            );
-            if (inserted == 0) {
-                RefundOperation operation = loadByKeyForUpdate(
-                        mandateId, idempotencyKey
-                );
-                if (!operation.requestFingerprint().equals(fingerprint)) {
-                    throw new IdempotencyKeyException(
-                            "Idempotency-Key was already used for a different refund request"
+        try {
+            return transactions.execute(status -> {
+                    String mandateId = request.agentContext()
+                            .merchantMandate().mandateId();
+                    lockCapture(request.captureId());
+                    RefundOperation keyedOperation = findByKeyForUpdate(
+                            mandateId, idempotencyKey
                     );
-                }
-                return operation;
-            }
+                    String fingerprint = RefundOperationStore.fingerprint(request);
+                    if (keyedOperation != null) {
+                        if (!keyedOperation.requestFingerprint().equals(fingerprint)) {
+                            throw new IdempotencyKeyException(
+                                    "Idempotency-Key was already used for a different refund request"
+                            );
+                        }
+                        return keyedOperation;
+                    }
+                    if (findCaptureBlockingOperation(request.captureId()) != null) {
+                        throw new CaptureRefundConflictException(
+                                "A prior refund operation still blocks this capture"
+                        );
+                    }
+                    String operationId = UUID.randomUUID().toString();
+                    String approvalId =
+                            decision.state() == RefundState.PENDING_APPROVAL
+                                    ? UUID.randomUUID().toString()
+                                    : null;
+                    Instant now = clock.instant();
+                    int inserted = jdbc.update(
+                            """
+                            insert into refund_operations (
+                                operation_id, mandate_id, idempotency_key,
+                                request_fingerprint, capture_id, amount_cents,
+                                currency, transaction_created_at,
+                                requester_agent_id, decision_state,
+                                decision_reason, budget_status, budget_explanation,
+                                state, approval_id, correlation_id,
+                                provider_request_id, created_at, updated_at
+                            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                                      ?, ?, ?, ?)
+                            on conflict (mandate_id, idempotency_key) do nothing
+                            """,
+                            UUID.fromString(operationId),
+                            mandateId,
+                            idempotencyKey,
+                            fingerprint,
+                            request.captureId(),
+                            request.amountCents(),
+                            request.currency(),
+                            Timestamp.from(request.transactionCreatedAt()),
+                            request.agentContext().agentId(),
+                            decision.state().name(),
+                            decision.reason(),
+                            decision.budgetDecision().status().name(),
+                            decision.budgetDecision().explanation(),
+                            decision.state().name(),
+                            approvalId == null ? null : UUID.fromString(approvalId),
+                            UUID.fromString(decision.correlationId()),
+                            operationId,
+                            Timestamp.from(now),
+                            Timestamp.from(now)
+                    );
+                    if (inserted == 0) {
+                        RefundOperation operation = findByKeyForUpdate(
+                                mandateId, idempotencyKey
+                        );
+                        if (operation == null) {
+                            throw new IllegalStateException(
+                                    "Refund operation conflict was not found"
+                            );
+                        }
+                        if (!operation.requestFingerprint().equals(fingerprint)) {
+                            throw new IdempotencyKeyException(
+                                    "Idempotency-Key was already used for a different refund request"
+                            );
+                        }
+                        return operation;
+                    }
 
-            if (decision.state() == RefundState.APPROVED
-                    || decision.state() == RefundState.PENDING_APPROVAL) {
-                reserve(mandateId, LocalDate.ofInstant(now, ZoneOffset.UTC),
-                        request.amountCents(), UUID.fromString(operationId), now);
+                    if (decision.state() == RefundState.APPROVED
+                            || decision.state() == RefundState.PENDING_APPROVAL) {
+                        reserve(mandateId,
+                                LocalDate.ofInstant(now, ZoneOffset.UTC),
+                                request.amountCents(),
+                                UUID.fromString(operationId), now);
+                    }
+                    return loadById(operationId);
+                });
+        } catch (DataAccessException exception) {
+            if (isCaptureGuardViolation(exception)) {
+                throw new CaptureRefundConflictException(
+                        "A prior refund operation still blocks this capture",
+                        exception
+                );
             }
-            return loadById(operationId);
-        });
+            throw exception;
+        }
+    }
+
+    private void lockCapture(String captureId) {
+        jdbc.execute(
+                "select pg_advisory_xact_lock(hashtextextended(?, 0))",
+                (PreparedStatementCallback<Void>) statement -> {
+                    statement.setString(1, captureId);
+                    statement.execute();
+                    return null;
+                }
+        );
+    }
+
+    private RefundOperation findCaptureBlockingOperation(String captureId) {
+        List<RefundOperation> rows = jdbc.query(
+                """
+                select * from refund_operations
+                 where capture_id = ?
+                   and state in (
+                       'PENDING_APPROVAL', 'APPROVED', 'IN_FLIGHT',
+                       'EXECUTED', 'RECONCILIATION_REQUIRED'
+                   )
+                 order by created_at
+                 limit 1
+                 for update
+                """,
+                mapper(),
+                captureId
+        );
+        return rows.isEmpty() ? null : rows.getFirst();
+    }
+
+    private static boolean isCaptureGuardViolation(Throwable exception) {
+        for (Throwable cause = exception; cause != null;
+             cause = cause.getCause()) {
+            if (cause instanceof java.sql.SQLException sqlException
+                    && "23505".equals(sqlException.getSQLState())
+                    && sqlException.getMessage() != null
+                    && sqlException.getMessage().contains(
+                            "\"refund_operations_one_active_per_capture\"")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -116,6 +198,23 @@ public class JdbcRefundOperationRepository
         List<RefundOperation> rows = jdbc.query(
                 "select * from refund_operations where idempotency_key = ?",
                 mapper(),
+                idempotencyKey
+        );
+        return rows.isEmpty() ? null : rows.getFirst();
+    }
+
+    @Override
+    public RefundOperation findByIdempotencyKey(
+            String mandateId,
+            String idempotencyKey
+    ) {
+        List<RefundOperation> rows = jdbc.query(
+                """
+                select * from refund_operations
+                 where mandate_id = ? and idempotency_key = ?
+                """,
+                mapper(),
+                mandateId,
                 idempotencyKey
         );
         return rows.isEmpty() ? null : rows.getFirst();
@@ -401,11 +500,11 @@ public class JdbcRefundOperationRepository
         );
     }
 
-    private RefundOperation loadByKeyForUpdate(
+    private RefundOperation findByKeyForUpdate(
             String mandateId,
             String idempotencyKey
     ) {
-        return jdbc.queryForObject(
+        List<RefundOperation> rows = jdbc.query(
                 """
                 select * from refund_operations
                 where mandate_id = ? and idempotency_key = ?
@@ -415,6 +514,7 @@ public class JdbcRefundOperationRepository
                 mandateId,
                 idempotencyKey
         );
+        return rows.isEmpty() ? null : rows.getFirst();
     }
 
     private RowMapper<RefundOperation> mapper() {

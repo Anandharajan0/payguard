@@ -2,6 +2,7 @@ package com.anandharajan.payguard.resolution;
 
 import com.anandharajan.payguard.paypal.PayPalRefundGateway;
 import com.anandharajan.payguard.policy.DemoBudgetDecision;
+import com.anandharajan.payguard.policy.CaptureRefundConflictException;
 import com.anandharajan.payguard.policy.RefundOperationStore;
 import com.anandharajan.payguard.policy.RefundService;
 import org.junit.jupiter.api.Test;
@@ -31,6 +32,7 @@ class ResolutionServiceTest {
                     event -> {},
                     Clock.systemUTC()
             ),
+            new InMemoryResolutionCaseRepository(),
             Clock.systemUTC(),
             "payguard-demo-mandate"
     );
@@ -110,6 +112,52 @@ class ResolutionServiceTest {
                         ),
                         "support-agent"
                 )
+        );
+    }
+
+    @Test
+    void replayReturnsTheOriginalCaseWithoutCallingPayPalAgain() {
+        when(payPal.refund(
+                eq("CAPTURE-35"), eq(3_500L), eq("USD"), anyString()
+        )).thenReturn(JsonMapper.builder().build().createObjectNode()
+                .put("id", "REFUND-35")
+                .put("status", "COMPLETED"));
+
+        ResolutionCaseRequest request = new ResolutionCaseRequest(
+                "Customer says they were charged twice and wants a refund",
+                "CAPTURE-35",
+                "resolution-replay"
+        );
+        ResolutionCaseResponse first = service.resolve(request, "support-agent");
+        ResolutionCaseResponse replay = service.resolve(request, "support-agent");
+
+        assertEquals(first.caseId(), replay.caseId());
+        assertEquals(first.execution().operationId(),
+                replay.execution().operationId());
+        verify(payPal).refund(
+                eq("CAPTURE-35"), eq(3_500L), eq("USD"), anyString()
+        );
+        assertThrows(
+                CaptureRefundConflictException.class,
+                () -> service.resolve(
+                        new ResolutionCaseRequest(
+                                "Another duplicate charge requests a refund",
+                                "CAPTURE-35",
+                                "resolution-replay-different-key"
+                        ),
+                        "support-agent"
+                )
+        );
+    }
+
+    @Test
+    void evidenceTimestampIsStableAcrossLookups() {
+        FixtureTransactionEvidenceProvider provider =
+                new FixtureTransactionEvidenceProvider(Clock.systemUTC());
+
+        assertEquals(
+                provider.find("CAPTURE-35").capturedAt(),
+                provider.find("CAPTURE-35").capturedAt()
         );
     }
 }
