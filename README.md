@@ -63,11 +63,76 @@ authority. The existing deterministic policy, budget reservation, approval
 workflow, audit path, and PayPal adapter remain the only authorization and
 execution path.
 
-The current evidence provider is a deterministic demo fixture for
-`CAPTURE-35`, `CAPTURE-475`, and `CAPTURE-600`; it is not a general PayPal
-transaction lookup. Hosted-model classification is available, but
-provider-backed transaction evidence remains future work. The resolution
-endpoint remains machine-to-machine and requires the AGENT role.
+The default evidence mode is the deterministic fixture provider for
+`CAPTURE-35`, `CAPTURE-475`, and `CAPTURE-600`:
+
+```text
+PAYGUARD_RESOLUTION_EVIDENCE_MODE=fixture
+```
+
+Fixture evidence is useful for offline tests only and is never live PayPal
+verification. Set `PAYGUARD_RESOLUTION_EVIDENCE_MODE=paypal` to require the
+PayPal capture-evidence provider. In that mode a capture must first be
+registered in the durable `paypal_capture_provenance` table and belong to the
+configured mandate. The provider then performs
+`GET /v2/payments/captures/{capture_id}` and accepts only a strict response
+whose ID, `COMPLETED` status, amount, currency, and timestamp match the
+registered record. This endpoint does not establish complete refund history or
+remaining refundable balance, so live evidence is deliberately marked
+`UNKNOWN` for refund eligibility and cannot create an executable refund
+operation. PayPal outages, malformed responses, mismatches, and unregistered
+captures return no evidence; live mode never falls back to the fixture
+provider.
+
+The isolated Sandbox setup utility creates and captures an Order after buyer
+approval, prints the real capture ID, and can register its immutable
+provenance:
+
+```bash
+export PAYPAL_CLIENT_ID=...
+export PAYPAL_CLIENT_SECRET=...
+export PAYGUARD_DB_URL=jdbc:postgresql://localhost:5432/payguard
+export PAYGUARD_DB_USERNAME=payguard
+export PAYGUARD_DB_PASSWORD=...
+bash scripts/paypal-sandbox-setup.sh 35.00
+```
+
+The script uses only the canonical Sandbox origin, keeps credentials in
+short-lived mode-0600 curl configuration files rather than command-line
+arguments, and does not log tokens or secrets. After the buyer approval step,
+set `PAYGUARD_REGISTER_CAPTURE=true` to insert the returned capture's
+provenance into PostgreSQL. Registration is only provenance; it does not
+authorize a refund or prove that PayPal exposes a complete external-refund
+ledger. The application still does not claim to discover refunds made outside
+PAYGUARD.
+
+For a live Sandbox run, set:
+
+```text
+PAYGUARD_RESOLUTION_EVIDENCE_MODE=paypal
+PAYPAL_BASE_URL=https://api-m.sandbox.paypal.com
+PAYGUARD_PERSISTENCE_MODE=postgres
+PAYGUARD_BUDGET_MODE=fail-closed
+```
+
+Run the three scenarios with real registered capture IDs:
+
+1. A newly captured $35 payment produces a live capture snapshot, but remains
+   blocked because remaining refundable balance is not provider-verified.
+2. A newly captured $475 payment has the same conservative live-evidence
+   block; the approval workflow cannot bypass unknown refund eligibility.
+3. A newly captured $600 payment is also blocked before any refund request is
+   sent. The automatic $35 and approval-gated $475 demonstrations require
+   fixture mode until authoritative PayPal refund-balance evidence exists.
+
+The response and PostgreSQL records expose the real provider capture ID,
+immutable evidence snapshot, model proposal, policy trace, operation ID,
+PayPal idempotency key, audit record, and final operation outcome. Known
+refund IDs can be looked up with PayPal's refund-details endpoint for future
+reconciliation workflows, but webhook ingestion, signature verification,
+event deduplication, and safe ambiguous-outcome reconciliation are not part of
+this milestone. External refunds therefore remain an explicit limitation, and
+ambiguous operations remain reserved and capture-blocking.
 
 Resolution cases now use stable trusted evidence snapshots and durable
 resolution idempotency in PostgreSQL. Evidence includes the original capture

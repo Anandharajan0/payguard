@@ -12,12 +12,23 @@ import com.anandharajan.payguard.policy.RefundOperationRepository;
 import javax.sql.DataSource;
 
 import java.time.Clock;
+import com.anandharajan.payguard.resolution.CaptureProvenanceRepository;
+import com.anandharajan.payguard.resolution.InMemoryCaptureProvenanceRepository;
 
 @Configuration
 public class PayguardConfiguration {
     @Bean
     Clock clock() {
         return Clock.systemUTC();
+    }
+
+    @Bean
+    @ConditionalOnProperty(
+            name = "payguard.persistence.mode",
+            havingValue = "in-memory"
+    )
+    CaptureProvenanceRepository inMemoryCaptureProvenanceRepository() {
+        return new InMemoryCaptureProvenanceRepository();
     }
 
     @Bean

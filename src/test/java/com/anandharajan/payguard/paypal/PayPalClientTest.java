@@ -322,6 +322,22 @@ class PayPalClientTest {
     }
 
     @Test
+    void rejectsUnboundedPayPalTimeoutConfiguration() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new PayPalClient(
+                        BASE_URL, "test-client", "test-secret", 0, 8000
+                )
+        );
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new PayPalClient(
+                        BASE_URL, "test-client", "test-secret", 2000, 0
+                )
+        );
+    }
+
+    @Test
     void validCompletedRefundResponseRemainsExecuted() {
         ClientFixture fixture = clientFixture();
         expectToken(fixture.server());
@@ -340,6 +356,32 @@ class PayPalClientTest {
 
         assertEquals(RefundState.EXECUTED, outcome.state());
         assertEquals("REFUND-1", outcome.refundId());
+        fixture.server().verify();
+    }
+
+    @Test
+    void captureAndKnownRefundLookupsUseOAuthAndNoRedirects() {
+        ClientFixture fixture = clientFixture();
+        expectToken(fixture.server());
+        fixture.server().expect(requestTo(BASE_URL
+                        + "/v2/payments/captures/CAPTURE-1"))
+                .andRespond(withSuccess(
+                        "{\"id\":\"CAPTURE-1\",\"status\":\"COMPLETED\"}",
+                        MediaType.APPLICATION_JSON
+                ));
+        expectToken(fixture.server());
+        fixture.server().expect(requestTo(BASE_URL
+                        + "/v2/payments/refunds/REFUND-1"))
+                .andRespond(withSuccess(
+                        "{\"id\":\"REFUND-1\",\"status\":\"COMPLETED\"}",
+                        MediaType.APPLICATION_JSON
+                ));
+
+        assertEquals("CAPTURE-1",
+                fixture.client().capture("CAPTURE-1").path("id").asText());
+        assertEquals("REFUND-1",
+                fixture.client().refundDetails("REFUND-1")
+                        .path("id").asText());
         fixture.server().verify();
     }
 

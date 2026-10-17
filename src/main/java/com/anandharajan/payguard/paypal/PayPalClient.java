@@ -14,6 +14,7 @@ import java.math.BigDecimal;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.http.HttpClient;
+import java.time.Duration;
 import java.util.Map;
 
 @Component
@@ -33,10 +34,20 @@ public class PayPalClient implements PayPalRefundGateway {
     public PayPalClient(
             @Value("${paypal.base-url}") String baseUrl,
             @Value("${paypal.client-id}") String clientId,
-            @Value("${paypal.client-secret}") String clientSecret
+            @Value("${paypal.client-secret}") String clientSecret,
+            @Value("${paypal.connect-timeout-ms:2000}") long connectTimeoutMs,
+            @Value("${paypal.request-timeout-ms:8000}") long requestTimeoutMs
     ) {
-        this(createClient(baseUrl),
+        this(createClient(baseUrl, connectTimeoutMs, requestTimeoutMs),
                 clientId, clientSecret);
+    }
+
+    PayPalClient(
+            String baseUrl,
+            String clientId,
+            String clientSecret
+    ) {
+        this(baseUrl, clientId, clientSecret, 2000, 8000);
     }
 
     PayPalClient(
@@ -101,6 +112,45 @@ public class PayPalClient implements PayPalRefundGateway {
         }
     }
 
+    public JsonNode capture(String captureId) {
+        return getJson("/v2/payments/captures/{captureId}", captureId);
+    }
+
+    public JsonNode refundDetails(String refundId) {
+        return getJson("/v2/payments/refunds/{refundId}", refundId);
+    }
+
+    private JsonNode getJson(String path, String id) {
+        String token;
+        try {
+            token = getAccessToken();
+        } catch (RuntimeException exception) {
+            throw new PayPalLookupException(
+                    "PAYPAL_TOKEN_UNAVAILABLE", exception
+            );
+        }
+        try {
+            return client.get()
+                    .uri(path, id)
+                    .headers(headers -> headers.setBearerAuth(token))
+                    .retrieve()
+                    .onStatus(status -> !status.is2xxSuccessful(),
+                            (request, response) -> {
+                                throw new PayPalLookupException(
+                                        "PAYPAL_HTTP_"
+                                                + response.getStatusCode().value()
+                                );
+                            })
+                    .body(JsonNode.class);
+        } catch (PayPalLookupException exception) {
+            throw exception;
+        } catch (RestClientException exception) {
+            throw new PayPalLookupException(
+                    "PAYPAL_LOOKUP_UNAVAILABLE", exception
+            );
+        }
+    }
+
     private String getAccessToken() {
         JsonNode response = client.post()
                 .uri("/v1/oauth2/token")
@@ -122,7 +172,9 @@ public class PayPalClient implements PayPalRefundGateway {
                 .body(JsonNode.class);
         String token = response == null
                 ? null
-                : response.path("access_token").asText(null);
+                : response.path("access_token").isTextual()
+                        ? response.path("access_token").asText()
+                        : null;
         if (token == null || token.isBlank()) {
             throw new IllegalStateException(
                     "PayPal access token response was incomplete"
@@ -131,17 +183,36 @@ public class PayPalClient implements PayPalRefundGateway {
         return token;
     }
 
-    private static RestClient createClient(String baseUrl) {
+    private static RestClient createClient(
+            String baseUrl,
+            long connectTimeoutMs,
+            long requestTimeoutMs
+    ) {
+        if (connectTimeoutMs <= 0 || requestTimeoutMs <= 0) {
+            throw new IllegalArgumentException(
+                    "PayPal timeouts must be positive"
+            );
+        }
         URI origin = validateBaseUrl(baseUrl);
+        JdkClientHttpRequestFactory requestFactory =
+                redirectSafeRequestFactory(connectTimeoutMs);
+        requestFactory.setReadTimeout(Duration.ofMillis(requestTimeoutMs));
         return RestClient.builder()
                 .baseUrl(origin.toString())
-                .requestFactory(redirectSafeRequestFactory())
+                .requestFactory(requestFactory)
                 .build();
     }
 
     static JdkClientHttpRequestFactory redirectSafeRequestFactory() {
+        return redirectSafeRequestFactory(2000);
+    }
+
+    private static JdkClientHttpRequestFactory redirectSafeRequestFactory(
+            long connectTimeoutMs
+    ) {
         return new JdkClientHttpRequestFactory(
                 HttpClient.newBuilder()
+                        .connectTimeout(Duration.ofMillis(connectTimeoutMs))
                         .followRedirects(HttpClient.Redirect.NEVER)
                         .build()
         );

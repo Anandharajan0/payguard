@@ -1,11 +1,17 @@
 package com.anandharajan.payguard.resolution;
 
 import org.springframework.stereotype.Component;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import java.time.Clock;
 import java.util.Map;
 
 @Component
+@ConditionalOnProperty(
+        name = "payguard.resolution.evidence-mode",
+        havingValue = "fixture",
+        matchIfMissing = true
+)
 public final class FixtureTransactionEvidenceProvider
         implements TransactionEvidenceProvider {
 
